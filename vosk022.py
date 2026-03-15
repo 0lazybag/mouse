@@ -9,7 +9,7 @@ import logging
 import ctypes
 from vosk import Model, KaldiRecognizer, SetLogLevel
 
-# Отключаем внутренние логи Vosk, чтобы не нагружать систему записью
+# Отключаем внутренние логи Vosk
 SetLogLevel(-1)
 
 # НАСТРОЙКИ
@@ -25,8 +25,32 @@ logging.basicConfig(
     encoding="utf-8"
 )
 
-def messagebox(title, text):
-    ctypes.windll.user32.MessageBoxW(0, text, title, 0x10)
+def скрыть_консоль():
+    """Скрывает окно терминала."""
+    окно = ctypes.windll.kernel32.GetConsoleWindow()
+    if окно != 0:
+        ctypes.windll.user32.ShowWindow(окно, 0)
+
+def messagebox(заголовок, текст):
+    ctypes.windll.user32.MessageBoxW(0, текст, заголовок, 0x10)
+
+def выбрать_устройство():
+    """Выводит список и просит ввести ID."""
+    список_устройств = sd.query_devices()
+    print("\n--- ДОСТУПНЫЕ УСТРОЙСТВА ВВОДА ---")
+    
+    допустимые_айди = []
+    for индекс, устройство in enumerate(список_устройств):
+        if устройство['max_input_channels'] > 0:
+            допустимые_айди.append(индекс)
+            метка = "[Bluetooth/Гарнитура]" if any(к in устройство['name'].lower() for к in ["bluetooth", "bowie", "головной"]) else ""
+            print(f"ID: {индекс} | {устройство['name']} {метка}")
+    
+    while True:
+        выбор = input("\nВведите ID нужного микрофона: ").strip()
+        if выбор.isdigit() and int(выбор) in допустимые_айди:
+            return int(выбор)
+        print("Ошибка: Введите корректный ID из списка выше.")
 
 def обратный_вызов_аудио(данные, кадры, время, статус):
     if статус:
@@ -34,6 +58,9 @@ def обратный_вызов_аудио(данные, кадры, время,
     ОЧЕРЕДЬ.put(bytes(данные))
 
 if __name__ == "__main__":
+    # Сначала выбираем устройство, пока консоль видна
+    айди_микрофона = выбрать_устройство()
+    
     полный_путь_модели = r"D:\VoskModels\vosk-model-ru-0.22"
 
     if not os.path.exists(полный_путь_модели):
@@ -41,18 +68,21 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
-        logging.info("Загрузка модели...")
+        print("Загрузка модели... Подождите.")
         модель = Model(полный_путь_модели)
-        # Оптимизация: распознаватель создается один раз
         распознаватель = KaldiRecognizer(модель, ЧАСТОТА)
 
-        айди_микрофона = 12 
-
-        with sd.RawInputStream(samplerate=ЧАСТОТА, blocksize=4000, # Уменьшил блок для плавности
-                               device=айди_микрофона, dtype='int16', 
-                               channels=1, callback=обратный_вызов_аудио):
+        # Подключаемся к потоку
+        стрим = sd.RawInputStream(samplerate=ЧАСТОТА, blocksize=4000, 
+                                  device=айди_микрофона, dtype='int16', 
+                                  channels=1, callback=обратный_вызов_аудио)
+        
+        with стрим:
+            logging.info(f"Старт записи с устройства {айди_микрофона}")
+            print(f"Подключено к ID {айди_микрофона}. Консоль скрывается...")
+            time.sleep(1) # Даем секунду прочитать сообщение
             
-            logging.info("Система активна (CPU Mode)")
+            скрыть_консоль()
 
             while True:
                 данные = ОЧЕРЕДЬ.get()
@@ -64,12 +94,11 @@ if __name__ == "__main__":
                         if "выход" in текст.lower():
                             break
                         
-                        # Пишем текст
                         keyboard.write(текст + " ")
-                        # Небольшая пауза для стабильности клавиатурного ввода
                         time.sleep(0.05)
 
     except Exception as ошибка:
         logging.critical(f"Ошибка: {ошибка}")
-        messagebox("Ошибка", str(ошибка))
+        # Если консоль скрыта, выводим ошибку через MessageBox
+        messagebox("Критическая ошибка", str(ошибка))
         sys.exit(1)
