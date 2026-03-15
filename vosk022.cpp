@@ -67,7 +67,7 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         KBDLLHOOKSTRUCT* pKeyBoard = (KBDLLHOOKSTRUCT*)lParam;
         if (pKeyBoard->vkCode == VK_CAPITAL) {
             ChangeKeyboardLayout();
-            return 1;
+            return 1; // Блокируем стандартное переключение Caps Lock
         }
     }
     return CallNextHookEx(NULL, nCode, wParam, lParam);
@@ -83,18 +83,20 @@ LRESULT CALLBACK MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
             
             WORD xButton = HIWORD(pMouseStruct->mouseData);
 
-            if (xButton == XBUTTON2 || xButton == XBUTTON1) {
+            if (xButton == XBUTTON1 || xButton == XBUTTON2) {
                 if (wParam == WM_XBUTTONDOWN || wParam == WM_NCXBUTTONDOWN) {
                     bool ctrlPressed = (GetAsyncKeyState(VK_CONTROL) & 0x8000);
-                    if (xButton == XBUTTON2) {
+                    
+                    if (xButton == XBUTTON2) { // Верхняя
                         if (ctrlPressed) SendKeyCombo('C');
                         else StartVoskProcess();
-                    } else {
+                    } 
+                    else if (xButton == XBUTTON1) { // Нижняя
                         if (ctrlPressed) SendKeyCombo('V');
                         else StopVoskProcess();
                     }
                 }
-                return 1; // Блокируем ТОЛЬКО X-кнопки
+                return 1; // Мертвая блокировка системных функций
             }
         }
     }
@@ -102,6 +104,15 @@ LRESULT CALLBACK MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
 }
 
 int main() {
+    // 1. Проверка на запущенную копию
+    HANDLE hMutex = CreateMutexA(NULL, TRUE, "VoskControl_Unique_Mutex_777");
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        SoundError(); 
+        if (hMutex) CloseHandle(hMutex);
+        return 1; 
+    }
+
+    // 2. Установка хуков
     HHOOK hMouseHook = SetWindowsHookEx(WH_MOUSE_LL, MouseHookProc, GetModuleHandle(NULL), 0);
     HHOOK hKeyHook = SetWindowsHookEx(WH_KEYBOARD_LL, KeyboardProc, GetModuleHandle(NULL), 0);
 
@@ -110,13 +121,20 @@ int main() {
         return 1;
     }
 
+    // 3. Цикл сообщений
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
 
+    // 4. Очистка
     UnhookWindowsHookEx(hMouseHook);
     UnhookWindowsHookEx(hKeyHook);
+    if (hMutex) {
+        ReleaseMutex(hMutex);
+        CloseHandle(hMutex);
+    }
+    
     return 0;
 }
